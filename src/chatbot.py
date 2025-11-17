@@ -316,31 +316,39 @@ Check the results folder or the Admin Panel for detailed evaluation.
 # Prompts & Fireworks API Functions - UPDATED FOR ALL SPECIALTIES
 # --------------------------
 EVALUATOR_PROMPT = """
-You are an HR interviewer and evaluator.
+You are an expert HR interviewer and evaluator.
 
 - You will receive candidate profile and answers for 10 interview questions.
+- Evaluate based on the candidate's specific field and specialty.
 - For each answer, provide:
   Score (0–10), Strengths, Weaknesses, Suggestions for improvement.
 - After all answers, provide a final overall evaluation:
   Average Score, Overall Strengths, Overall Weaknesses, and Final Recommendation (Hire / Consider / Reject).
 
-The output must be valid JSON in the format:
+CRITICAL: The output MUST be valid JSON in this EXACT format:
 
 {
   "evaluations": {
     "Question 1": {"score": 8, "strengths": "...", "weaknesses": "...", "suggestions": "..."},
-    "Question 2": {...},
-    ...
-    "Question 10": {...}
+    "Question 2": {"score": 7, "strengths": "...", "weaknesses": "...", "suggestions": "..."},
+    "Question 3": {"score": 9, "strengths": "...", "weaknesses": "...", "suggestions": "..."},
+    "Question 4": {"score": 6, "strengths": "...", "weaknesses": "...", "suggestions": "..."},
+    "Question 5": {"score": 8, "strengths": "...", "weaknesses": "...", "suggestions": "..."},
+    "Question 6": {"score": 7, "strengths": "...", "weaknesses": "...", "suggestions": "..."},
+    "Question 7": {"score": 9, "strengths": "...", "weaknesses": "...", "suggestions": "..."},
+    "Question 8": {"score": 8, "strengths": "...", "weaknesses": "...", "suggestions": "..."},
+    "Question 9": {"score": 7, "strengths": "...", "weaknesses": "...", "suggestions": "..."},
+    "Question 10": {"score": 8, "strengths": "...", "weaknesses": "...", "suggestions": "..."}
   },
   "final_evaluation": {
-    "average_score": 7.5,
+    "average_score": "7.7",
     "overall_strengths": "...",
     "overall_weaknesses": "...",
     "recommendation": "Consider"
   }
 }
-Return only valid JSON, without any explanations or markdown fences.
+
+Return ONLY valid JSON, without any explanations, markdown fences, or additional text.
 """
 
 # UPDATED: Universal fallback questions for all specialties
@@ -465,25 +473,50 @@ Candidate Profile:
     return FALLBACK_QUESTIONS[:num]
 
 def evaluate_with_fireworks(answers: dict, profile: dict) -> dict:
+    """Evaluate candidate answers using Fireworks API - works for all specialties"""
+    specialist = profile.get('specialist', 'professional')
+    
     profile_text = "\n".join([f"{k.replace('_', ' ').title()}: {v}" for k, v in profile.items()])
     answers_text = "\n".join([f"Q{i+1}: {q}\nA{i+1}: {a}" for i, (q, a) in enumerate(answers.items())])
+    
     full_prompt = EVALUATOR_PROMPT + "\n\nCandidate Profile:\n" + profile_text + "\n\nCandidate Answers:\n" + answers_text
-    response = call_fireworks_api(full_prompt, "You are an HR interviewer for doctors.")
+    
+    # Updated system prompt to be dynamic based on specialty
+    system_prompt = f"You are an expert HR interviewer and evaluator with experience in {specialist} and related fields."
+    
+    response = call_fireworks_api(full_prompt, system_prompt)
     
     if response:
         try:
+            # Check for API error first
             try:
                 error_check = json.loads(response)
                 if "error" in error_check:
+                    print(f"API Error in evaluation: {error_check['error']}")
                     return error_check
             except json.JSONDecodeError:
                 pass
+            
+            # Clean and parse JSON
             raw_text = clean_markdown_fences(response)
-            return json.loads(raw_text)
+            evaluation_data = json.loads(raw_text)
+            
+            # Validate structure
+            if "evaluations" not in evaluation_data or "final_evaluation" not in evaluation_data:
+                print(f"Invalid evaluation structure: {evaluation_data}")
+                return {"error": "Invalid evaluation format returned by API"}
+            
+            return evaluation_data
+            
+        except json.JSONDecodeError as e:
+            print(f"JSON parsing error in evaluation: {e}")
+            print(f"Raw response: {response[:500]}...")  # Print first 500 chars
+            return {"error": f"Evaluation failed (JSON parsing error): {str(e)}"}
         except Exception as e:
-            print(f"Failed to parse evaluation JSON: {e}")
-            return {"error": f"Evaluation failed (JSON parsing error): {e}"}
+            print(f"Unexpected error in evaluation: {e}")
+            return {"error": f"Evaluation failed: {str(e)}"}
     else:
+        print("No response received from Fireworks API")
         return {"error": "No valid response from API or response was None."}
 
 def save_results_txt(candidate_name, answers, evaluation_json, profile):
@@ -1044,10 +1077,40 @@ def register_callbacks(app):
             return dcc.send_string(
                 f"Error reading file: {e}", filename="download_error.txt"
             )
+def check_admin_password(pathname, search):
+    """Check if password is provided in URL"""
+    # Interview pages don't require password
+    if pathname and pathname.startswith('/interview/'):
+        return True
+    
+    # All other pages require password in URL
+    if search and 'pw=' in search:
+        # Extract password from ?pw=xxx or &pw=xxx
+        password = search.split('pw=')[1].split('&')[0]
+        # URL decode the password (handles special characters)
+        from urllib.parse import unquote
+        password = unquote(password)
+        
+        if password == ADMIN_PASSWORD:
+            return True
+    
+    return False
+
 __all__ = [
     "register_callbacks",
     "interview_layout",
     "admin_panel_layout",
     "init_database",
     "add_new_columns_if_not_exists",
+    "generate_interview_token",
+    "reset_database",
+    "get_all_interviews",
+    "validate_interview_token",
+    "submit_profile",
+    "update_interview_display",
+    "trigger_evaluation",
+    "display_evaluation",
+    "submit_answer",
+    "ADMIN_PASSWORD",
+    "check_admin_password",
 ]

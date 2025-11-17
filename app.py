@@ -30,7 +30,7 @@ try:
         add_new_columns_if_not_exists, generate_interview_token,
         reset_database, get_all_interviews, validate_interview_token,
         submit_profile, update_interview_display, trigger_evaluation,
-        display_evaluation, submit_answer
+        display_evaluation, submit_answer,ADMIN_PASSWORD,check_admin_password
     )
 except Exception as e:
     print(f"Error loading chatbot module: {e}")
@@ -186,13 +186,53 @@ app.layout = html.Div(
 )
 init_database()
 add_new_columns_if_not_exists()
+def check_admin_password(pathname, search):
+    """Check if password is provided in URL - except for interview links"""
+    # Interview pages don't require password
+    if pathname and pathname.startswith('/interview/'):
+        return True
+    
+    # All other pages require password
+    if search and 'pw=' in search:
+        # Extract password from ?pw=xxx or &pw=xxx
+        password = search.split('pw=')[1].split('&')[0]
+        # URL decode the password (handles special characters)
+        from urllib.parse import unquote
+        password = unquote(password)
+        
+        if password == ADMIN_PASSWORD:
+            return True
+    
+    return False  # No password = blocked (except interviews)
 
-@app.callback(Output("page-content", "children"), Input("url", "pathname"))
-def display_page(pathname):
-    if pathname and pathname.startswith("/interview/"):
+@app.callback(
+    Output('page-content', 'children'),
+    [Input('url', 'pathname'),
+     Input('url', 'search')]
+)
+def display_page(pathname, search):
+    print(f"DEBUG - pathname: {pathname}")
+    print(f"DEBUG - search: {search}")
+    
+    # Interview pages (standalone - no password required)
+    if pathname and pathname.startswith('/interview/'):
+        print("DEBUG - Showing interview layout")
         return interview_layout()
-
-    # Default – main app with tabs
+    
+    # Check password for the entire app
+    password_valid = check_admin_password(pathname, search)
+    print(f"DEBUG - Password valid: {password_valid}")
+    
+    if not password_valid:
+        print("DEBUG - Blocking access - no password")
+        return dbc.Container([
+            dbc.Alert([
+                html.H4("🔒 Access Required"),
+                html.P("Password required to access the application.")
+            ], color="danger", className="mt-5")
+        ], className="p-4")
+    
+    print("DEBUG - Showing main app with tabs")
     return dbc.Container(
         [
             create_header(),
@@ -211,6 +251,8 @@ def display_page(pathname):
         fluid=True,
         className="px-4",
     )
+    
+
 
 @app.callback(
     Output("tab-content", "children"),
@@ -222,7 +264,7 @@ def display_page(pathname):
     ],
 )
 def render_tab_content(active_tab, bulk_res, excel_path, single_ui):
-    # ---------- ADMIN ----------
+    # ---------- ADMIN TAB ----------
     if active_tab == "admin":
         if not getattr(app, "_db_initialized", False):
             init_database()
@@ -235,12 +277,10 @@ def render_tab_content(active_tab, bulk_res, excel_path, single_ui):
         base_layout = create_bulk_tab()
         children = list(base_layout.children)
 
-        # Only build results UI if we have BOTH data and path
         results_ui = None
         if bulk_res and excel_path:
             results_ui = _render_bulk_results_ui(bulk_res, excel_path)
 
-        # Replace the placeholder
         for i, child in enumerate(children):
             if getattr(child, "id", None) == "results-content":
                 children[i] = html.Div(results_ui or "", id="results-content")
@@ -260,7 +300,6 @@ def render_tab_content(active_tab, bulk_res, excel_path, single_ui):
 
         return html.Div(children)
 
-    # fallback
     return create_bulk_tab()
 
 def _render_bulk_results_ui(results_data, excel_path):
@@ -994,4 +1033,4 @@ def simple_download_handler(clicks_list, ids_list):
     return dash.no_update
 
 if __name__ == "__main__":
-    app.run_server(debug=True, host="0.0.0.0", port=8050)
+    app.run(debug=True, host="0.0.0.0", port=8053)
